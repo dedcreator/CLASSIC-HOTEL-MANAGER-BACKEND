@@ -1,4 +1,3 @@
-# backend/bookings/views.py
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -6,13 +5,19 @@ from rest_framework.response import Response
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta, datetime
+from decimal import Decimal
 from .models import Guest, Booking
 from rooms.models import Room
 from .serializers import (
     GuestSerializer, BookingSerializer, 
     CreateBookingSerializer, SimpleBookingSerializer,
-    CheckInSerializer
+    CheckInSerializer, CheckOutSerializer
 )
+from payments.models import Payment
+from payments.services import korapay_service
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ========== PUBLIC ENDPOINTS (No Authentication Required) ==========
 
@@ -50,7 +55,6 @@ def public_booking(request):
         check_out = datetime.strptime(data.get('checkOut'), '%Y-%m-%d').date()
         
         # Find available room
-        # Get all rooms of requested type that are available
         available_rooms = Room.objects.filter(
             room_type=data.get('roomType'),
             status='available'
@@ -67,7 +71,6 @@ def public_booking(request):
         available_rooms = available_rooms.exclude(id__in=booked_room_ids)
         
         if not available_rooms.exists():
-            # If specific type not available, try any available room
             any_available = Room.objects.filter(status='available').exclude(
                 id__in=Booking.objects.filter(
                     check_in__lt=check_out,
@@ -135,13 +138,11 @@ def public_availability(request):
         check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
         check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
         
-        # Base query for available rooms
         available_rooms = Room.objects.filter(status='available')
         
         if room_type:
             available_rooms = available_rooms.filter(room_type=room_type)
         
-        # Exclude rooms booked for these dates
         booked_room_ids = Booking.objects.filter(
             check_in__lt=check_out_date,
             check_out__gt=check_in_date,
@@ -180,6 +181,12 @@ class GuestViewSet(viewsets.ModelViewSet):
                 Q(phone__icontains=search)
             )
         return queryset
+    
+    @action(detail=True, methods=['get'])
+    def booking_history(self, request, pk=None):
+        guest = self.get_object()
+        bookings = Booking.objects.filter(guest=guest).order_by('-created_at')
+        return Response(BookingSerializer(bookings, many=True).data)
 
 class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all().order_by('-created_at')
@@ -194,12 +201,10 @@ class BookingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Booking.objects.all()
         
-        # Filter by status
         status = self.request.query_params.get('status')
         if status:
             queryset = queryset.filter(status=status)
         
-        # Filter by date range
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         if start_date and end_date:
@@ -208,12 +213,10 @@ class BookingViewSet(viewsets.ModelViewSet):
                 check_out__lte=end_date
             )
         
-        # Filter by room
         room = self.request.query_params.get('room')
         if room:
             queryset = queryset.filter(room_id=room)
         
-        # Search
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -230,6 +233,9 @@ class BookingViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def check_in(self, request, pk=None):
+        """
+        Check-in a guest with payment processing
+        """
         booking = self.get_object()
         serializer = CheckInSerializer(data=request.data)
         
@@ -242,24 +248,161 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        booking.payment_method = serializer.validated_data['payment_method']
-        if serializer.validated_data.get('amount_paid'):
-            booking.amount_paid = serializer.validated_data['amount_paid']
+        payment_method = serializer.validated_data.get('payment_method', 'cash')
         
-        booking.payment_status = 'paid'
-        booking.status = 'checked_in'
-        booking.checked_in_at = timezone.now()
-        booking.save()
+        # Handle cash payment
+        if payment_method in ['cash', 'card']:
+            booking.payment_method = payment_method
+            if serializer.validated_data.get('amount_paid'):
+                booking.amount_paid = serializer.validated_data['amount_paid']
+            else:
+                booking.amount_paid = booking.total_amount
+            
+            booking.payment_status = 'paid'
+            booking.status = 'checked_in'
+            booking.checked_in_at = timezone.now()
+            booking.save()
+            
+            # Update room status
+            room = booking.room
+            room.status = 'occupied'
+            room.save()
+            
+            # Create payment record
+            Payment.objects.create(
+                transaction_id=f"CHECKIN-{booking.id}",
+                amount=booking.amount_paid,
+                payment_method=payment_method,
+                payment_type='checkin',
+                status='completed',
+                booking=booking,
+                checkin=booking,
+                customer_name=booking.guest.get_full_name(),
+                customer_email=booking.guest.email,
+                created_by=request.user,
+                paid_at=timezone.now(),
+            )
+            
+            return Response({
+                'success': True,
+                'booking': BookingSerializer(booking).data,
+                'message': f'Guest checked in successfully'
+            })
         
-        room = booking.room
-        room.status = 'occupied'
-        room.save()
+        # Handle Korapay payment
+        elif payment_method == 'korapay':
+            # Initialize Korapay payment
+            result = korapay_service.initialize_payment(
+                amount=booking.total_amount,
+                customer_email=booking.guest.email,
+                customer_name=booking.guest.get_full_name(),
+                payment_type='checkin',
+                metadata={
+                    'booking_id': str(booking.id),
+                    'check_in': str(booking.check_in),
+                    'check_out': str(booking.check_out),
+                    'room_number': booking.room.room_number,
+                },
+                description=f"Check-in payment for Room {booking.room.room_number}"
+            )
+            
+            if result.get('success'):
+                # Create pending payment record
+                payment = Payment.objects.create(
+                    transaction_id=result['reference'],
+                    amount=booking.total_amount,
+                    payment_method='korapay',
+                    payment_type='checkin',
+                    status='pending',
+                    booking=booking,
+                    checkin=booking,
+                    customer_name=booking.guest.get_full_name(),
+                    customer_email=booking.guest.email,
+                    created_by=request.user,
+                    metadata={
+                        'check_in_data': serializer.validated_data,
+                    }
+                )
+                
+                return Response({
+                    'success': True,
+                    'requires_payment': True,
+                    'payment_link': result['payment_link'],
+                    'payment_reference': result['reference'],
+                    'booking': BookingSerializer(booking).data,
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Payment initialization failed',
+                    'message': result.get('message'),
+                }, status=status.HTTP_400_BAD_REQUEST)
         
-        return Response(BookingSerializer(booking).data)
+        return Response({
+            'success': False,
+            'error': 'Invalid payment method',
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def confirm_checkin_payment(self, request, pk=None):
+        """
+        Confirm check-in after successful Korapay payment
+        """
+        booking = self.get_object()
+        payment = Payment.objects.filter(
+            booking=booking, 
+            checkin=booking,
+            status='pending'
+        ).first()
+        
+        if not payment:
+            return Response({
+                'success': False,
+                'error': 'No pending payment found for this check-in'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Verify payment with Korapay
+        result = korapay_service.verify_payment(payment.transaction_id)
+        
+        if result.get('success') and result.get('verified'):
+            # Update payment
+            payment.mark_completed()
+            
+            # Update booking
+            booking.payment_method = 'korapay'
+            booking.amount_paid = booking.total_amount
+            booking.payment_status = 'paid'
+            booking.status = 'checked_in'
+            booking.checked_in_at = timezone.now()
+            booking.save()
+            
+            # Update room status
+            room = booking.room
+            room.status = 'occupied'
+            room.save()
+            
+            return Response({
+                'success': True,
+                'booking': BookingSerializer(booking).data,
+                'message': 'Check-in completed successfully'
+            })
+        else:
+            return Response({
+                'success': False,
+                'error': 'Payment verification failed',
+                'message': result.get('message', 'Payment not completed'),
+            }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
     def check_out(self, request, pk=None):
+        """
+        Check-out a guest and handle any outstanding charges
+        """
         booking = self.get_object()
+        serializer = CheckOutSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         if booking.status != 'checked_in':
             return Response(
@@ -267,15 +410,42 @@ class BookingViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Handle additional charges (e.g., bar charges, room service)
+        additional_charges = serializer.validated_data.get('additional_charges', 0)
+        if additional_charges > 0:
+            booking.total_amount += additional_charges
+            booking.save()
+            
+            # Create sale for additional charges
+            from sales.models import Sale, SaleItem
+            sale = Sale.objects.create(
+                guest_name=booking.guest.get_full_name(),
+                total_amount=additional_charges,
+                subtotal=additional_charges,
+                payment_method='room_charge',
+                payment_status='paid',
+                created_by=request.user,
+                notes=f'Room charges for booking {booking.booking_reference}',
+            )
+            # Link sale to booking
+            booking.additional_charges_sale = sale
+            booking.save()
+        
         booking.status = 'checked_out'
         booking.checked_out_at = timezone.now()
         booking.save()
         
+        # Update room status
         room = booking.room
         room.status = 'cleaning'
         room.save()
         
-        return Response(BookingSerializer(booking).data)
+        return Response({
+            'success': True,
+            'booking': BookingSerializer(booking).data,
+            'message': f'Guest checked out successfully',
+            'additional_charges': float(additional_charges),
+        })
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -291,8 +461,18 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save()
         
         if booking.payment_status == 'paid':
-            booking.payment_status = 'refunded'
-            booking.save()
+            # Initiate refund if payment was made
+            payment = Payment.objects.filter(booking=booking, status='completed').first()
+            if payment:
+                refund_result = korapay_service.refund_payment(
+                    reference=payment.transaction_id,
+                    reason='Booking cancelled'
+                )
+                if refund_result.get('success'):
+                    payment.status = 'refunded'
+                    payment.save()
+                    booking.payment_status = 'refunded'
+                    booking.save()
         
         return Response(BookingSerializer(booking).data)
     
@@ -330,10 +510,69 @@ class BookingViewSet(viewsets.ModelViewSet):
             status='checked_in'
         ).count()
         
+        # Revenue stats
+        total_revenue = Booking.objects.filter(
+            payment_status='paid'
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+        
+        pending_payments = Booking.objects.filter(
+            payment_status='pending'
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+        
         return Response({
             'total_bookings': total_bookings,
             'active_guests': active_guests,
             'today_arrivals': today_arrivals,
             'today_departures': today_departures,
+            'total_revenue': float(total_revenue),
+            'pending_payments': float(pending_payments),
+            'occupancy_rate': float(active_guests / total_bookings * 100) if total_bookings > 0 else 0,
         })
     
+    @action(detail=True, methods=['post'])
+    def add_charge(self, request, pk=None):
+        """
+        Add a charge to a booking (e.g., bar charges, room service)
+        """
+        booking = self.get_object()
+        
+        if booking.status != 'checked_in':
+            return Response(
+                {'error': 'Only checked-in bookings can have charges added'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        amount = request.data.get('amount')
+        description = request.data.get('description', 'Additional charge')
+        
+        if not amount or amount <= 0:
+            return Response(
+                {'error': 'Valid amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create sale for the charge
+        from sales.models import Sale
+        sale = Sale.objects.create(
+            guest_name=booking.guest.get_full_name(),
+            total_amount=amount,
+            subtotal=amount,
+            payment_method='room_charge',
+            payment_status='paid',
+            created_by=request.user,
+            notes=description,
+        )
+        
+        # Link to booking
+        booking.total_amount += amount
+        booking.save()
+        
+        return Response({
+            'success': True,
+            'booking': BookingSerializer(booking).data,
+            'charge_added': {
+                'amount': amount,
+                'description': description,
+                'sale_id': str(sale.id),
+            }
+        })

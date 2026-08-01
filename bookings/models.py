@@ -18,6 +18,10 @@ class Guest(models.Model):
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
     
+    def get_full_name(self):
+        """Return the full name of the guest"""
+        return f"{self.first_name} {self.last_name}".strip()
+    
     class Meta:
         ordering = ['-created_at']
 
@@ -35,6 +39,13 @@ class Booking(models.Model):
         ('refunded', 'Refunded'),
     ]
     
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Cash'),
+        ('card', 'Card'),
+        ('transfer', 'Transfer'),
+        ('korapay', 'Korapay'),
+    ]
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     booking_reference = models.CharField(max_length=50, unique=True, blank=True)
     guest = models.ForeignKey(Guest, on_delete=models.PROTECT, related_name='bookings')
@@ -48,11 +59,7 @@ class Booking(models.Model):
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed')
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
-    payment_method = models.CharField(max_length=20, choices=[
-        ('cash', 'Cash'),
-        ('card', 'Card'),
-        ('transfer', 'Transfer'),
-    ], null=True, blank=True)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, null=True, blank=True)
     special_requests = models.TextField(blank=True, null=True)
     checked_in_at = models.DateTimeField(null=True, blank=True)
     checked_out_at = models.DateTimeField(null=True, blank=True)

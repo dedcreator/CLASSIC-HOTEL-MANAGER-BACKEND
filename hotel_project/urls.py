@@ -24,7 +24,7 @@ urlpatterns = [
     path('api/', include(router.urls)),
     
     # Accounts app (authentication and user management)
-    path('api/auth/', include('accounts.urls')),  # This handles all /api/accounts/* routes
+    path('api/auth/', include('accounts.urls')),
     
     # Other app routes
     path('api/inventory/', include('inventory.urls')),
@@ -32,6 +32,7 @@ urlpatterns = [
     path('api/reports/', include('reports.urls')), 
     path('api/sales/', include('sales.urls')),
     path('api/consumables/', include('consumables.urls')),
+    path('api/payments/', include('payments.urls')),
 ]
 
 # DRF Settings

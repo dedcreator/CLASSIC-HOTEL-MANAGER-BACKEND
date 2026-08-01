@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'sales',
     'reports',
     'consumables',
+    'payments',
 ]
 
 # MIDDLEWARE - CorsMiddleware MUST be at the very top
@@ -239,3 +240,17 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 # EMAIL_HOST_USER = 'your-email@gmail.com'
 # EMAIL_HOST_PASSWORD = 'your-app-password'
 # DEFAULT_FROM_EMAIL = 'Hotel Manager <noreply@hotelmanager.com>'
+
+
+# Payment Settings
+KORAPAY_PUBLIC_KEY = os.environ.get('KORAPAY_PUBLIC_KEY', '')
+KORAPAY_SECRET_KEY = os.environ.get('KORAPAY_SECRET_KEY', '')
+KORAPAY_SANDBOX = os.environ.get('KORAPAY_SANDBOX', True)
+KORAPAY_CALLBACK_URL = os.environ.get('KORAPAY_CALLBACK_URL', 'https://yourdomain.com/payments/verify')
+KORAPAY_WEBHOOK_SECRET = os.environ.get('KORAPAY_WEBHOOK_SECRET', '')
+
+
+# Migration for payments
+MIGRATION_MODULES = {
+    'payments': 'payments.migrations',
+}

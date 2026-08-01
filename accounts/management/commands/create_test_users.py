@@ -1,0 +1,71 @@
+from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+class Command(BaseCommand):
+    help = 'Create test users for development'
+
+    def handle(self, *args, **kwargs):
+        # Test users data
+        users = [
+            {
+                'username': 'ceo_user',
+                'email': 'ceo@example.com',
+                'password': 'ceopassword123',
+                'role': 'CEO',
+                'phone': '+1234567890'
+            },
+            {
+                'username': 'manager_user',
+                'email': 'manager@example.com',
+                'password': 'managerpassword123',
+                'role': 'MANAGER',
+                'phone': '+1234567891'
+            },
+            {
+                'username': 'reception_user',
+                'email': 'reception@example.com',
+                'password': 'reception123',
+                'role': 'RECEPTIONIST',
+                'phone': '+1234567892'
+            },
+            {
+                'username': 'bar_user',
+                'email': 'bar@example.com',
+                'password': 'barstaff123',
+                'role': 'BAR_STAFF',
+                'phone': '+1234567893'
+            }
+        ]
+
+        # Create new users
+        for user_data in users:
+            if not User.objects.filter(username=user_data['username']).exists():
+                user = User.objects.create_user(
+                    username=user_data['username'],
+                    email=user_data['email'],
+                    password=user_data['password'],
+                    role=user_data['role'],
+                    phone=user_data['phone']
+                )
+                self.stdout.write(
+                    self.style.SUCCESS(f'Created user: {user.username} ({user.role})')
+                )
+            else:
+                self.stdout.write(
+                    self.style.WARNING(f'User {user_data["username"]} already exists')
+                )
+
+        # Create superuser
+        if not User.objects.filter(username='admin').exists():
+            User.objects.create_superuser(
+                username='admin',
+                email='admin@example.com',
+                password='adminpassword123'
+            )
+            self.stdout.write(
+                self.style.SUCCESS('Created superuser: admin')
+            )
+
+        self.stdout.write(self.style.SUCCESS('\n✅ All test users created successfully!'))
