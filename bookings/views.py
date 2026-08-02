@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # ========== PUBLIC ENDPOINTS (No Authentication Required) ==========
 
+# backend/bookings/views.py - Update public_booking
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def public_booking(request):
@@ -89,8 +91,9 @@ def public_booking(request):
         else:
             room = available_rooms.first()
         
-        # Calculate nights
+        # Calculate nights and total amount
         nights = (check_out - check_in).days
+        total_amount = room.base_price * nights
         
         # Create booking
         booking = Booking.objects.create(
@@ -101,7 +104,7 @@ def public_booking(request):
             adults=data.get('adults', 1),
             children=data.get('children', 0),
             total_nights=nights,
-            total_amount=data.get('totalAmount', 0),
+            total_amount=total_amount,
             special_requests=data.get('specialRequests', ''),
             status='confirmed',
             payment_status='pending'
@@ -111,15 +114,22 @@ def public_booking(request):
             'success': True,
             'booking_reference': booking.booking_reference,
             'message': 'Booking created successfully',
-            'room_number': room.room_number
+            'room_number': room.room_number,
+            'room_type': room.room_type,
+            'total_amount': float(total_amount),
+            'nights': nights,
+            'price_per_night': float(room.base_price),
+            'booking': BookingSerializer(booking).data
         }, status=status.HTTP_201_CREATED)
         
     except Exception as e:
+        logger.error(f"Public booking error: {str(e)}")
         return Response(
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_availability(request):
@@ -138,31 +148,55 @@ def public_availability(request):
         check_in_date = datetime.strptime(check_in, '%Y-%m-%d').date()
         check_out_date = datetime.strptime(check_out, '%Y-%m-%d').date()
         
-        available_rooms = Room.objects.filter(status='available')
+        # Start with all rooms
+        all_rooms = Room.objects.filter(status='available')
         
+        # Filter by room type if provided
         if room_type:
-            available_rooms = available_rooms.filter(room_type=room_type)
+            all_rooms = all_rooms.filter(room_type=room_type)
         
+        # Get rooms that have conflicting bookings
         booked_room_ids = Booking.objects.filter(
             check_in__lt=check_out_date,
             check_out__gt=check_in_date,
             status__in=['confirmed', 'checked_in']
         ).values_list('room_id', flat=True)
         
-        available_rooms = available_rooms.exclude(id__in=booked_room_ids)
+        # Exclude booked rooms
+        available_rooms = all_rooms.exclude(id__in=booked_room_ids)
+        
+        # Get all available room types
+        available_types = available_rooms.values_list('room_type', flat=True).distinct()
         
         return Response({
             'available': available_rooms.exists(),
             'available_rooms': available_rooms.count(),
-            'room_types': list(available_rooms.values_list('room_type', flat=True).distinct())
+            'room_types': list(available_types),
+            'rooms': [
+                {
+                    'id': str(room.id),
+                    'room_number': room.room_number,
+                    'room_type': room.room_type,
+                    'base_price': float(room.base_price),
+                    'name': room.name,
+                }
+                for room in available_rooms[:5]  # Return first 5 rooms
+            ],
+            'check_in': check_in,
+            'check_out': check_out,
+            'debug': {
+                'total_rooms': Room.objects.filter(status='available').count(),
+                'filtered_rooms': all_rooms.count(),
+                'booked_rooms': booked_room_ids.count(),
+            }
         })
         
     except Exception as e:
+        logger.error(f"Availability check error: {str(e)}")
         return Response(
             {'error': str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
-
 # ========== VIEWSETS (Require Authentication) ==========
 
 class GuestViewSet(viewsets.ModelViewSet):

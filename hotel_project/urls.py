@@ -2,7 +2,6 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rooms.views import RoomViewSet
 from inventory.views import (
     ProductViewSet, BatchViewSet, 
     StockMovementViewSet, StockAlertViewSet
@@ -10,7 +9,6 @@ from inventory.views import (
 from sales.views import SaleViewSet
 
 router = DefaultRouter()
-router.register('rooms', RoomViewSet)
 router.register('products', ProductViewSet)
 router.register('batches', BatchViewSet)
 router.register('stock-movements', StockMovementViewSet)
@@ -28,6 +26,7 @@ urlpatterns = [
     
     # Other app routes
     path('api/inventory/', include('inventory.urls')),
+    path('api/rooms/', include('rooms.urls')),
     path('api/bookings/', include('bookings.urls')), 
     path('api/reports/', include('reports.urls')), 
     path('api/sales/', include('sales.urls')),

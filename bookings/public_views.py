@@ -80,33 +80,65 @@ def create_booking(request):
 @csrf_exempt
 @require_http_methods(["GET"])
 def check_availability(request):
-    """Check room availability"""
+    """
+    Check room availability. Response shape matches what the frontend
+    (hotel-website/app/booking/page.tsx) expects:
+      { available, available_rooms, room_types, rooms: [...] }
+    Previously this returned {available, count} only, which is why the
+    frontend always showed "no rooms available" even on a 200 response.
+    """
     check_in = request.GET.get('check_in')
     check_out = request.GET.get('check_out')
-    
+    room_type = request.GET.get('room_type')  # was previously read but never used
+
     if not check_in or not check_out:
         return JsonResponse({'error': 'Dates required'}, status=400)
-    
+
     try:
         check_in_date = datetime.datetime.strptime(check_in, '%Y-%m-%d').date()
         check_out_date = datetime.datetime.strptime(check_out, '%Y-%m-%d').date()
-        
-        # Find available rooms
-        available_rooms = Room.objects.filter(status='available')
-        
-        # Exclude booked rooms
+
+        # Start with all available rooms
+        rooms_qs = Room.objects.filter(status='available')
+
+        # Apply room_type filter if the frontend sent one
+        if room_type:
+            rooms_qs = rooms_qs.filter(room_type=room_type)
+
+        # Exclude rooms with a conflicting booking for these dates
         booked_ids = Booking.objects.filter(
             check_in__lt=check_out_date,
             check_out__gt=check_in_date,
             status__in=['confirmed', 'checked_in']
         ).values_list('room_id', flat=True)
-        
-        available = available_rooms.exclude(id__in=booked_ids)
-        
+
+        available_rooms = rooms_qs.exclude(id__in=booked_ids)
+
+        # room_types should reflect what's available across ALL types,
+        # not just the filtered one, so the "no rooms of X, but Y is free"
+        # messaging on the frontend has something useful to show.
+        all_available_types = Room.objects.filter(
+            status='available'
+        ).exclude(id__in=booked_ids).values_list('room_type', flat=True).distinct()
+
         return JsonResponse({
-            'available': available.exists(),
-            'count': available.count()
+            'available': available_rooms.exists(),
+            'available_rooms': available_rooms.count(),
+            'room_types': list(all_available_types),
+            'rooms': [
+                {
+                    'id': str(room.id),
+                    'room_number': room.room_number,
+                    'room_type': room.room_type,
+                    'base_price': float(room.base_price),
+                    'name': room.name,
+                }
+                for room in available_rooms[:5]
+            ],
         })
+    except ValueError as e:
+        # e.g. bad date format
+        return JsonResponse({'error': f'Invalid date: {str(e)}'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
