@@ -33,14 +33,20 @@ urlpatterns = [
     path('api/sales/', include('sales.urls')),
     path('api/consumables/', include('consumables.urls')),
     path('api/payments/', include('payments.urls')),
+    path('api/menu/', include('menu.urls')),  
+    path('api/tables/', include('tables.urls')),
 ]
 
-# DRF Settings
+# DRF Settings - Add DEFAULT_PERMISSION_CLASSES
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    # Add this - default to authenticated for all views
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
     ],
 }

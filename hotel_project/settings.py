@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework.authtoken',
     'anymail',
+    'channels',
     
     # Created apps
     'accounts',
@@ -38,6 +39,8 @@ INSTALLED_APPS = [
     'reports',
     'consumables',
     'payments',
+    'menu',
+    'tables',
 ]
 
 # MIDDLEWARE - CorsMiddleware MUST be at the very top
@@ -73,6 +76,19 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'hotel_project.wsgi.application'
+
+# Add Channels configuration
+ASGI_APPLICATION = 'hotel_project.asgi.application'
+
+# Redis channel layer (for production)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 
 # Database
 DATABASES = {
@@ -121,6 +137,10 @@ from datetime import timedelta
 
 
 REST_FRAMEWORK = {
+        'DEFAULT_RENDERER_CLASSES': (
+        'rest_framework.renderers.JSONRenderer',
+    ),
+
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',  
         'rest_framework_simplejwt.authentication.JWTAuthentication', 
@@ -132,6 +152,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PARSER_CLASSES': [
         'rest_framework.parsers.JSONParser',
     ],
+
 }
 
 # JWT Settings - Increase token lifetimes
@@ -157,6 +178,7 @@ SIMPLE_JWT = {
 # ====== CORS SETTINGS - ADD THESE AT THE BOTTOM ======
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://127.0.0.1:3000",
     "http://172.20.10.4:3000",
 ]
