@@ -12,9 +12,12 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here'
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-# ALLOWED_HOSTS for Render and local development
+# ALLOWED_HOSTS for Render, UptimeRobot, and local development
 ALLOWED_HOSTS_CONFIG = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com,*')
 ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_CONFIG.split(',') if host.strip()]
+for default_host in ['localhost', '127.0.0.1', 'testserver', '.onrender.com']:
+    if default_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(default_host)
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)

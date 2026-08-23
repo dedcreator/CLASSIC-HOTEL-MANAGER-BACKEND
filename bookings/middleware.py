@@ -7,6 +7,8 @@ class PublicBypassMiddleware(MiddlewareMixin):
     Completely bypass authentication and CSRF for public endpoints
     """
     PUBLIC_PREFIXES = (
+        '/health',
+        '/api/health',
         '/api/bookings/public/',
         '/api/menu/public/',
         '/api/tables/public/',

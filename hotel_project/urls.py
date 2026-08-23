@@ -7,6 +7,7 @@ from inventory.views import (
     StockMovementViewSet, StockAlertViewSet
 )
 from sales.views import SaleViewSet
+from .health import health_check
 
 router = DefaultRouter()
 router.register('products', ProductViewSet)
@@ -16,6 +17,12 @@ router.register('stock-alerts', StockAlertViewSet)
 router.register('sales', SaleViewSet)
 
 urlpatterns = [
+    # Health Check endpoints for UptimeRobot & Render
+    path('health/', health_check, name='health_check'),
+    path('health', health_check, name='health_check_no_slash'),
+    path('api/health/', health_check, name='api_health_check'),
+    path('api/health', health_check, name='api_health_check_no_slash'),
+
     path('admin/', admin.site.urls),
     
     # API routes
