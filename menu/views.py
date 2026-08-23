@@ -126,9 +126,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         notes = serializer.validated_data.get('notes', '')
         
         valid_transitions = {
-            'pending': ['preparing', 'cancelled'],
-            'preparing': ['ready', 'cancelled'],
-            'ready': ['served', 'cancelled'],
+            'pending': ['preparing', 'ready', 'served', 'paid', 'cancelled'],
+            'preparing': ['ready', 'served', 'paid', 'cancelled'],
+            'ready': ['served', 'paid', 'cancelled'],
             'served': ['paid', 'cancelled'],
             'paid': [],
             'cancelled': [],
@@ -140,6 +140,10 @@ class OrderViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         order.update_status(new_status, request.user)
+        if new_status == 'paid':
+            order.payment_status = 'paid'
+            order.paid_at = timezone.now()
+            order.save()
         
         if notes:
             order.notes = (order.notes + '\n' + notes) if order.notes else notes
@@ -150,6 +154,40 @@ class OrderViewSet(viewsets.ModelViewSet):
             'order': OrderSerializer(order).data,
             'message': f'Order status updated to {new_status}'
         })
+    
+    @action(detail=True, methods=['post'], permission_classes=[AllowAny])
+    def pay(self, request, pk=None):
+        """Customer or staff payment for an order"""
+        order = self.get_object()
+        payment_method = request.data.get('payment_method', 'korapay')
+        payment_reference = request.data.get('payment_reference', '')
+        
+        order.status = 'paid'
+        order.payment_status = 'paid'
+        order.payment_method = payment_method
+        order.paid_at = timezone.now()
+        order.save()
+        
+        if payment_reference:
+            from payments.models import Payment
+            Payment.objects.update_or_create(
+                transaction_id=payment_reference,
+                defaults={
+                    'amount': order.total_amount,
+                    'payment_method': payment_method,
+                    'payment_type': 'sale',
+                    'status': 'completed',
+                    'customer_name': order.customer_name or f"Table {order.table.table_number}",
+                    'paid_at': timezone.now(),
+                }
+            )
+            
+        return Response({
+            'success': True,
+            'order': OrderSerializer(order).data,
+            'message': 'Order paid successfully'
+        })
+
     
     @action(detail=False, methods=['get'])
     def today(self, request):

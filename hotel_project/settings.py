@@ -4,14 +4,20 @@ import os
 from pathlib import Path
 from decouple import config
 
+import dj_database_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here')
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-# This is fine - keeps your existing ALLOWED_HOSTS
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+# ALLOWED_HOSTS for Render and local development
+ALLOWED_HOSTS_CONFIG = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com,*')
+ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_CONFIG.split(',') if host.strip()]
+RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 # Application definition
 INSTALLED_APPS = [
@@ -20,6 +26,7 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'whitenoise.runserver_nostatic',
     'django.contrib.staticfiles',
     
     # Third party apps
@@ -27,8 +34,6 @@ INSTALLED_APPS = [
     'corsheaders', 
     'rest_framework_simplejwt',
     'rest_framework.authtoken',
-    'anymail',
-    'channels',
     
     # Created apps
     'accounts',
@@ -43,12 +48,13 @@ INSTALLED_APPS = [
     'tables',
 ]
 
-# MIDDLEWARE - CorsMiddleware MUST be at the very top
+# MIDDLEWARE - CorsMiddleware and WhiteNoise
 MIDDLEWARE = [
     'bookings.middleware.PublicBypassMiddleware', 
     'accounts.middleware.DisableCSRFForAPI',
     'corsheaders.middleware.CorsMiddleware', 
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -77,13 +83,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'hotel_project.wsgi.application'
 
-
-# Database
+# Database - automatic PostgreSQL support on Render with SQLite local fallback
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 
 # Password validation
@@ -109,8 +115,10 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+WHITENOISE_MANIFEST_STRICT = False
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -163,15 +171,25 @@ SIMPLE_JWT = {
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
 
-# ====== CORS SETTINGS - ADD THESE AT THE BOTTOM ======
+# ====== CORS SETTINGS ======
+CORS_ALLOWED_ORIGINS_CONFIG = config('CORS_ALLOWED_ORIGINS', default='').strip()
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
     "http://127.0.0.1:3000",
-    "http://172.20.10.4:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
 ]
+if CORS_ALLOWED_ORIGINS_CONFIG:
+    for origin in CORS_ALLOWED_ORIGINS_CONFIG.split(','):
+        if origin.strip() and origin.strip() not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(origin.strip())
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=True, cast=bool)
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -192,73 +210,36 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-korapay-signature',
 ]
 
-# For development only - you can temporarily enable this
-# CORS_ALLOW_ALL_ORIGINS = True
-
-# Disable authentication for these specific paths
-import re
-class DisableAuthForPublicPaths:
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        if request.path.startswith('/api/bookings/public/'):
-            # Mock authentication
-            from django.contrib.auth.models import AnonymousUser
-            request.user = AnonymousUser()
-        return self.get_response(request)
-
-MIDDLEWARE.append('hotel_project.settings.DisableAuthForPublicPaths')
-
-# CSRF Trusted Origins (sometimes needed)
+# CSRF Trusted Origins
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://localhost:3003",
     "http://127.0.0.1:3000",
-    "http://172.20.10.4:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+    "http://127.0.0.1:3003",
+    "https://*.onrender.com",
+    "https://*.vercel.app",
 ]
-
-# ====== EMAIL CONFIGURATION (BREVO) ======
-
-# Brevo/Anymail Configuration
-ANYMAIL = {
-    'BREVO_API_KEY': 'your-brevo-api-key-here',  # Replace with your actual key
-}
-
-# Use Brevo as the email backend
-EMAIL_BACKEND = 'anymail.backends.brevo.EmailBackend'
-
-# Default from address (use your verified domain if you set one up)
-DEFAULT_FROM_EMAIL = 'TSG HOTEL <noreply@tsghotel.com.ng>'
-
-# For error reports
-SERVER_EMAIL = 'errors@tsghotel.com.ng'
-
-# Optional but recommended - store API key in environment variable
-import os
-BREVO_API_KEY = os.environ.get('BREVO_API_KEY', 'your-api-key-here')
+if RENDER_EXTERNAL_HOSTNAME:
+    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
 
 # Email settings (development)
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = 'ClASSIC HOTEL <noreply@tsghotel.com.ng>'
+SERVER_EMAIL = 'errors@tsghotel.com.ng'
 
-# For production, use:
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = 'smtp.gmail.com'
-# EMAIL_PORT = 587
-# EMAIL_USE_TLS = True
-# EMAIL_HOST_USER = 'your-email@gmail.com'
-# EMAIL_HOST_PASSWORD = 'your-app-password'
-# DEFAULT_FROM_EMAIL = 'Hotel Manager <noreply@hotelmanager.com>'
-
-
-# Payment Settings
-KORAPAY_PUBLIC_KEY = os.environ.get('KORAPAY_PUBLIC_KEY', '')
-KORAPAY_SECRET_KEY = os.environ.get('KORAPAY_SECRET_KEY', '')
-KORAPAY_SANDBOX = os.environ.get('KORAPAY_SANDBOX', True)
-KORAPAY_CALLBACK_URL = os.environ.get('KORAPAY_CALLBACK_URL', 'https://yourdomain.com/payments/verify')
-KORAPAY_WEBHOOK_SECRET = os.environ.get('KORAPAY_WEBHOOK_SECRET', '')
-
+# Payment Settings (Korapay)
+KORAPAY_PUBLIC_KEY = config('KORAPAY_PUBLIC_KEY', default=os.environ.get('KORAPAY_PUBLIC_KEY', 'pk_test_korapay_public_key'))
+KORAPAY_SECRET_KEY = config('KORAPAY_SECRET_KEY', default=os.environ.get('KORAPAY_SECRET_KEY', 'sk_test_korapay_secret_key'))
+KORAPAY_SANDBOX = config('KORAPAY_SANDBOX', default=True, cast=bool)
+KORAPAY_CALLBACK_URL = config('KORAPAY_CALLBACK_URL', default='http://localhost:3000/payment/verify')
+KORAPAY_WEBHOOK_SECRET = config('KORAPAY_WEBHOOK_SECRET', default=os.environ.get('KORAPAY_WEBHOOK_SECRET', ''))
 
 # Migration for payments
 MIGRATION_MODULES = {

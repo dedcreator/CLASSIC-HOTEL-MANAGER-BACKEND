@@ -1,5 +1,6 @@
 # backend/sales/serializers.py
 from rest_framework import serializers
+from django.utils import timezone
 from .models import Sale, SaleItem, Customer, SavedCart
 from inventory.serializers import ProductSerializer
 from decimal import Decimal, ROUND_HALF_UP
@@ -29,8 +30,12 @@ class SaleSerializer(serializers.ModelSerializer):
 class CreateSaleSerializer(serializers.Serializer):
     guest_name = serializers.CharField(required=False, allow_blank=True, default="Walk-in Guest")
     room_id = serializers.UUIDField(required=False, allow_null=True)
-    payment_method = serializers.ChoiceField(choices=['cash', 'card', 'transfer', 'room_charge'])
+    payment_method = serializers.ChoiceField(choices=['cash', 'card', 'transfer', 'korapay', 'bank_transfer', 'room_charge'], default='cash')
     amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=0)
+    customer_email = serializers.EmailField(required=False, allow_blank=True)
+    customer_phone = serializers.CharField(required=False, allow_blank=True)
+    payment_reference = serializers.CharField(required=False, allow_blank=True)
+    payment_channel = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
     items = serializers.ListField(
         child=serializers.DictField()
@@ -45,15 +50,24 @@ class CreateSaleSerializer(serializers.Serializer):
         items_data = validated_data.pop('items')
         amount_paid = validated_data.pop('amount_paid', Decimal('0'))
         room_id = validated_data.pop('room_id', None)
+        customer_email = validated_data.pop('customer_email', '')
+        customer_phone = validated_data.pop('customer_phone', '')
+        payment_reference = validated_data.pop('payment_reference', '')
+        payment_channel = validated_data.pop('payment_channel', '')
         
         # Get staff from context
         request = self.context.get('request')
-        staff = request.user if request else None
+        staff = request.user if (request and hasattr(request, 'user') and request.user.is_authenticated) else None
+        
+        # Determine payment status
+        payment_method = validated_data.get('payment_method', 'cash')
+        payment_status = 'paid' if (payment_reference or payment_method in ['cash', 'card', 'transfer', 'bank_transfer', 'room_charge']) else 'pending'
         
         # Create sale
         sale = Sale.objects.create(
             staff=staff,
             amount_paid=amount_paid,
+            payment_status=payment_status,
             **validated_data
         )
         
@@ -80,9 +94,27 @@ class CreateSaleSerializer(serializers.Serializer):
         sale.refresh_from_db()
         
         # Calculate change for cash payments
-        if validated_data.get('payment_method') == 'cash' and amount_paid > sale.total_amount:
+        if payment_method == 'cash' and amount_paid > sale.total_amount:
             sale.change = amount_paid - sale.total_amount
             sale.save()
+        
+        # If payment_reference is present, update or create Payment record
+        if payment_reference:
+            from payments.models import Payment
+            Payment.objects.update_or_create(
+                transaction_id=payment_reference,
+                defaults={
+                    'amount': sale.total_amount,
+                    'payment_method': payment_method,
+                    'payment_type': 'sale',
+                    'status': 'completed',
+                    'sale': sale,
+                    'customer_name': sale.guest_name,
+                    'customer_email': customer_email,
+                    'customer_phone': customer_phone,
+                    'paid_at': timezone.now(),
+                }
+            )
         
         return sale
 

@@ -47,36 +47,98 @@ class BookingSerializer(serializers.ModelSerializer):
         return obj.total_nights
 
 class CreateBookingSerializer(serializers.ModelSerializer):
+    guest = serializers.PrimaryKeyRelatedField(queryset=Guest.objects.all(), required=False)
+    room = serializers.PrimaryKeyRelatedField(queryset=Room.objects.all(), required=False)
+    guest_name = serializers.CharField(write_only=True, required=False)
+    guest_email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
+    guest_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    room_id = serializers.UUIDField(write_only=True, required=False)
+    total_nights = serializers.IntegerField(required=False)
+    notes = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    
     class Meta:
         model = Booking
         fields = [
-            'guest', 'room', 'check_in', 'check_out', 
+            'id', 'booking_reference',
+            'guest', 'room', 'guest_name', 'guest_email', 'guest_phone', 'room_id',
+            'check_in', 'check_out', 
             'adults', 'children', 'total_nights', 'total_amount',
-            'special_requests', 'status', 'payment_status'
+            'special_requests', 'notes', 'status', 'payment_status'
         ]
+        read_only_fields = ['id', 'booking_reference']
     
     def create(self, validated_data):
-        print("Creating booking with data:", validated_data)
+        guest = validated_data.get('guest')
+        guest_name = validated_data.pop('guest_name', None)
+        guest_email = validated_data.pop('guest_email', '')
+        guest_phone = validated_data.pop('guest_phone', '')
+        room = validated_data.get('room')
+        room_id = validated_data.pop('room_id', None)
+        notes = validated_data.pop('notes', '')
+        
+        # Handle guest
+        if not guest and guest_name:
+            name_parts = guest_name.strip().split()
+            first_name = name_parts[0] if name_parts else 'Guest'
+            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else 'Visitor'
+            guest = Guest.objects.create(
+                first_name=first_name,
+                last_name=last_name,
+                email=guest_email or f"{first_name.lower()}@guest.com",
+                phone=guest_phone or '0000000000',
+            )
+            validated_data['guest'] = guest
+        elif not guest:
+            # Fallback guest if none provided
+            guest, _ = Guest.objects.get_or_create(
+                email='walkin@tsghotel.com.ng',
+                defaults={'first_name': 'Walk-in', 'last_name': 'Guest', 'phone': '0000000000'}
+            )
+            validated_data['guest'] = guest
+            
+        # Handle room
+        if not room and room_id:
+            try:
+                room = Room.objects.get(id=room_id)
+                validated_data['room'] = room
+            except Room.DoesNotExist:
+                raise serializers.ValidationError({'room': 'Room not found'})
+        
+        # Calculate nights
+        check_in = validated_data.get('check_in')
+        check_out = validated_data.get('check_out')
+        if check_in and check_out:
+            nights = (check_out - check_in).days
+            if nights <= 0:
+                nights = 1
+            validated_data['total_nights'] = validated_data.get('total_nights') or nights
+            
+            # Calculate total amount
+            if not validated_data.get('total_amount') and room:
+                validated_data['total_amount'] = room.base_price * nights
+        
+        if notes and not validated_data.get('special_requests'):
+            validated_data['special_requests'] = notes
+            
         booking = Booking.objects.create(**validated_data)
-        print("Created booking:", booking.id, booking.booking_reference)
         return booking
 
 class CheckInSerializer(serializers.Serializer):
-    """Serializer for check-in with Korapay payment only"""
-    payment_method = serializers.CharField(max_length=20, default='korapay')
+    """Serializer for check-in with payment processing"""
+    payment_method = serializers.ChoiceField(
+        choices=['korapay', 'cash', 'card', 'transfer'],
+        default='korapay'
+    )
     amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
     payment_reference = serializers.CharField(max_length=100, required=False, allow_null=True)
     
     def validate(self, data):
         """Validate the check-in data"""
         payment_method = data.get('payment_method', 'korapay')
-        
-        # Only allow Korapay (cashless)
-        if payment_method != 'korapay':
+        if payment_method not in ['korapay', 'cash', 'card', 'transfer']:
             raise serializers.ValidationError({
-                'payment_method': 'Only Korapay payments are accepted (cashless)'
+                'payment_method': f'Invalid payment method: {payment_method}'
             })
-        
         return data
 
 class CheckOutSerializer(serializers.Serializer):

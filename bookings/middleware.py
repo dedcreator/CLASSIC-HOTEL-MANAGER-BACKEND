@@ -4,15 +4,20 @@ from django.contrib.auth.models import AnonymousUser
 
 class PublicBypassMiddleware(MiddlewareMixin):
     """
-    Completely bypass authentication for public booking endpoints
+    Completely bypass authentication and CSRF for public endpoints
     """
+    PUBLIC_PREFIXES = (
+        '/api/bookings/public/',
+        '/api/menu/public/',
+        '/api/tables/public/',
+        '/api/payments/webhook/',
+    )
+
     def process_request(self, request):
-        if request.path.startswith('/api/bookings/public/'):
-            # Set a flag to skip all authentication
+        if any(request.path.startswith(prefix) for prefix in self.PUBLIC_PREFIXES):
+            # Set a flag to skip all CSRF checks
             request._dont_enforce_csrf_checks = True
-            # Ensure user is anonymous
-            request.user = AnonymousUser()
-            # Remove authorization header if present
-            if 'HTTP_AUTHORIZATION' in request.META:
-                del request.META['HTTP_AUTHORIZATION']
+            # Ensure user is anonymous if not authenticated
+            if not hasattr(request, 'user') or not request.user.is_authenticated:
+                request.user = AnonymousUser()
         return None

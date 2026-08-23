@@ -34,11 +34,19 @@ def login(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
-            username = data.get('username')
+            username_or_email = data.get('username')
             password = data.get('password')
             
-            if not username or not password:
+            if not username_or_email or not password:
                 return JsonResponse({'error': 'Username and password required'}, status=400)
+            
+            username = username_or_email.strip()
+            if '@' in username:
+                try:
+                    user_obj = User.objects.get(email__iexact=username)
+                    username = user_obj.username
+                except (User.DoesNotExist, User.MultipleObjectsReturned):
+                    pass
             
             user = authenticate(username=username, password=password)
             

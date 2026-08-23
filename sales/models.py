@@ -12,6 +12,8 @@ class Sale(models.Model):
         ('cash', 'Cash'),
         ('card', 'Card'),
         ('transfer', 'Transfer'),
+        ('korapay', 'Korapay'),
+        ('bank_transfer', 'Bank Transfer'),
         ('room_charge', 'Room Charge'),
     ]
     
