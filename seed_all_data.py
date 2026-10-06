@@ -7,14 +7,15 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from datetime import timedelta, date
+from datetime import timedelta, date, datetime
 from decimal import Decimal
 from accounts.models import User
-from rooms.models import Room
+from rooms.models import Room, RoomAccessCode, SecurityAuditLog, log_security_event
 from bookings.models import Guest, Booking
 from inventory.models import Product, Batch, StockMovement
 from menu.models import Category as MenuCategory, MenuItem, Order, OrderItem
 from tables.models import Table
+from sales.models import Sale, SaleItem
 
 def run_seed():
     print("🚀 Starting full database population...")
@@ -26,6 +27,7 @@ def run_seed():
         ('manager', 'manager@hotel.com', 'manager123', 'MANAGER', 'Folake', 'Adeyemi', True, False),
         ('reception', 'reception@hotel.com', 'reception123', 'RECEPTIONIST', 'Amina', 'Bello', False, False),
         ('barstaff', 'bar@hotel.com', 'bar123', 'BAR_STAFF', 'Emeka', 'Okafor', False, False),
+        ('housekeeping', 'housekeeping@hotel.com', 'housekeeping123', 'HOUSEKEEPING', 'Blessing', 'Effiong', False, False),
     ]
 
     for uname, email, pwd, role, fname, lname, is_sup, is_stf in users_info:
@@ -48,7 +50,7 @@ def run_seed():
     rooms_data = [
         {'room_number': '101', 'room_type': 'standard', 'base_price': 15000, 'capacity': 2, 'name': 'Cozy Standard 101', 'description': 'Queen bed, workspace, smart TV, rainfall shower.', 'size': 30, 'amenities': ['WiFi', 'TV', 'AC', 'Safe'], 'status': 'available', 'rating': 4.8, 'review_count': 32},
         {'room_number': '102', 'room_type': 'standard', 'base_price': 18000, 'capacity': 2, 'name': 'Garden Standard 102', 'description': 'Peaceful garden view, natural sunlight, queen bed.', 'size': 32, 'amenities': ['WiFi', 'TV', 'AC', 'Garden View'], 'status': 'available', 'rating': 4.7, 'review_count': 25},
-        {'room_number': '103', 'room_type': 'standard', 'base_price': 20000, 'capacity': 2, 'name': 'Executive Standard 103', 'description': 'Fast fiber WiFi, ergonomic desk, minibar.', 'size': 35, 'amenities': ['WiFi', 'TV', 'AC', 'Minibar'], 'status': 'available', 'rating': 4.9, 'review_count': 40},
+        {'room_number': '103', 'room_type': 'standard', 'base_price': 20000, 'capacity': 2, 'name': 'Executive Standard 103', 'description': 'Fast fiber WiFi, ergonomic desk, minibar.', 'size': 35, 'amenities': ['WiFi', 'TV', 'AC', 'Minibar'], 'status': 'cleaning', 'rating': 4.9, 'review_count': 40},
         {'room_number': '201', 'room_type': 'deluxe', 'base_price': 25000, 'capacity': 2, 'name': 'Deluxe King 201', 'description': 'Plush king bed, private balcony, luxury bathroom.', 'size': 45, 'amenities': ['WiFi', 'TV', 'AC', 'Balcony', 'Bathtub'], 'status': 'occupied', 'rating': 4.9, 'review_count': 58},
         {'room_number': '202', 'room_type': 'deluxe', 'base_price': 28000, 'capacity': 2, 'name': 'Deluxe Skyline 202', 'description': 'Panoramic views, deep soaking tub, espresso bar.', 'size': 50, 'amenities': ['WiFi', 'TV', 'AC', 'City View', 'Bathtub'], 'status': 'available', 'rating': 4.9, 'review_count': 64},
         {'room_number': '203', 'room_type': 'deluxe', 'base_price': 30000, 'capacity': 2, 'name': 'Grand Deluxe 203', 'description': 'Spacious layout with lounge seating and jacuzzi.', 'size': 55, 'amenities': ['WiFi', 'TV', 'AC', 'Jacuzzi'], 'status': 'available', 'rating': 4.8, 'review_count': 44},
@@ -160,6 +162,107 @@ def run_seed():
             defaults=b_data
         )
         print(f"  • Booking {b.booking_reference}: {b.guest.get_full_name()} (Room {b.room.room_number} - {b.status})")
+
+    # 3b. Zero-Trust Access Codes & Security Audit Logs
+    print("\n🔐 Seeding Zero-Trust Ephemeral Access Codes & Security Audit Logs...")
+    reception_user = User.objects.get(username='reception')
+    housekeeping_user = User.objects.get(username='housekeeping')
+
+    # Checked-in Guest 1 (Room 201)
+    b201 = Booking.objects.filter(room=r201, status='checked_in').first()
+    if b201:
+        checkout_dt = timezone.make_aware(datetime.combine(b201.check_out, datetime.min.time())) + timedelta(hours=11, minutes=10)
+        code_201, _ = RoomAccessCode.objects.get_or_create(
+            code='CHK-201-9481',
+            defaults={
+                'code_type': 'checkin',
+                'room': r201,
+                'booking': b201,
+                'status': 'active',
+                'created_by': reception_user,
+                'approved_by': reception_user,
+                'valid_from': b201.checked_in_at or (timezone.now() - timedelta(days=1)),
+                'valid_until': checkout_dt,
+                'reason': f"Guest Check-in: {b201.guest.get_full_name()}",
+            }
+        )
+        SecurityAuditLog.objects.get_or_create(
+            access_code=code_201.code,
+            defaults={
+                'actor': reception_user,
+                'actor_username': reception_user.username,
+                'actor_role': reception_user.role,
+                'action': 'CHECKIN_CODE_GENERATED',
+                'room': r201,
+                'room_number': r201.room_number,
+                'booking': b201,
+                'booking_reference': b201.booking_reference,
+                'details': f"Check-in ephemeral access code issued for Guest {b201.guest.get_full_name()}. Valid until 10 mins post-checkout.",
+            }
+        )
+        print(f"  • Room 201 Active Check-in Key: {code_201.code} (Expires: {code_201.valid_until.strftime('%Y-%m-%d %H:%M')})")
+
+    # Checked-in Guest 2 (Room 301)
+    b301 = Booking.objects.filter(room=r301, status='checked_in').first()
+    if b301:
+        checkout_dt_301 = timezone.make_aware(datetime.combine(b301.check_out, datetime.min.time())) + timedelta(hours=11, minutes=10)
+        code_301, _ = RoomAccessCode.objects.get_or_create(
+            code='CHK-301-4820',
+            defaults={
+                'code_type': 'checkin',
+                'room': r301,
+                'booking': b301,
+                'status': 'active',
+                'created_by': reception_user,
+                'approved_by': reception_user,
+                'valid_from': b301.checked_in_at or timezone.now(),
+                'valid_until': checkout_dt_301,
+                'reason': f"Guest Check-in: {b301.guest.get_full_name()}",
+            }
+        )
+        SecurityAuditLog.objects.get_or_create(
+            access_code=code_301.code,
+            defaults={
+                'actor': reception_user,
+                'actor_username': reception_user.username,
+                'actor_role': reception_user.role,
+                'action': 'CHECKIN_CODE_GENERATED',
+                'room': r301,
+                'room_number': r301.room_number,
+                'booking': b301,
+                'booking_reference': b301.booking_reference,
+                'details': f"Check-in ephemeral access code issued for Guest {b301.guest.get_full_name()}.",
+            }
+        )
+        print(f"  • Room 301 Active Check-in Key: {code_301.code} (Expires: {code_301.valid_until.strftime('%Y-%m-%d %H:%M')})")
+
+    # Cleaning Key Request for Room 103 (Pending Manager Approval)
+    r103 = Room.objects.get(room_number='103')
+    code_103, _ = RoomAccessCode.objects.get_or_create(
+        code='CLN-103-6204',
+        defaults={
+            'code_type': 'cleaning',
+            'room': r103,
+            'status': 'pending_approval',
+            'created_by': housekeeping_user,
+            'valid_from': timezone.now(),
+            'valid_until': timezone.now() + timedelta(hours=3),
+            'reason': 'Departure room sanitation and linen change.',
+        }
+    )
+    SecurityAuditLog.objects.get_or_create(
+        access_code=code_103.code,
+        defaults={
+            'actor': housekeeping_user,
+            'actor_username': housekeeping_user.username,
+            'actor_role': housekeeping_user.role,
+            'action': 'CLEANING_CODE_REQUESTED',
+            'room': r103,
+            'room_number': r103.room_number,
+            'details': 'Housekeeping cleaning access key requested by Blessing Effiong. Pending Manager authorization.',
+        }
+    )
+    print(f"  • Room 103 Cleaning Key Request: {code_103.code} (Status: {code_103.status} - Awaiting Manager Approval)")
 
     # 4. Tables
     print("\n🍽️ Seeding Dining Tables...")
@@ -361,6 +464,42 @@ def run_seed():
         }
     )
     print(f"  • Order {sample_order.order_number} for Table {sample_order.table.table_number}: ₦{sample_order.total_amount:,} ({sample_order.status})")
+
+    # 8. POS Sales
+    print("\n💳 Seeding POS Sales Transactions...")
+    bar_user = User.objects.get(username='barstaff')
+    heineken = Product.objects.filter(name__icontains='Heineken').first()
+    coke = Product.objects.filter(name__icontains='Coca Cola').first()
+    whiskey = Product.objects.filter(name__icontains='Jameson').first()
+
+    if heineken and coke:
+        if not Sale.objects.filter(guest_name='Adebayo Ogunlesi').exists():
+            sale1 = Sale(
+                guest_name='Adebayo Ogunlesi',
+                room=r201,
+                payment_method='room_charge',
+                payment_status='completed',
+                notes='Room service drinks charged to room folio.',
+                staff=bar_user,
+            )
+            sale1.save()
+            SaleItem.objects.create(sale=sale1, product=heineken, quantity=2, unit_price=heineken.default_price)
+            SaleItem.objects.create(sale=sale1, product=coke, quantity=2, unit_price=coke.default_price)
+            print(f"  • POS Sale {sale1.transaction_number}: ₦{sale1.total_amount:,} charged to Room 201 ({sale1.payment_method})")
+
+        if not Sale.objects.filter(notes__icontains='Walk-in lounge guest').exists():
+            sale2 = Sale(
+                guest_name='Walk-in Customer',
+                payment_method='card',
+                payment_status='completed',
+                notes='Walk-in lounge guest cocktail & beverage order.',
+                staff=bar_user,
+            )
+            sale2.save()
+            if whiskey:
+                SaleItem.objects.create(sale=sale2, product=whiskey, quantity=1, unit_price=whiskey.default_price)
+            SaleItem.objects.create(sale=sale2, product=coke, quantity=4, unit_price=coke.default_price)
+            print(f"  • POS Sale {sale2.transaction_number}: ₦{sale2.total_amount:,} ({sale2.payment_method})")
 
     print("\n🎉 ALL SEED DATA POPULATED SUCCESSFULLY!")
 

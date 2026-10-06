@@ -158,6 +158,24 @@ class RoomAccessCodeViewSet(viewsets.ModelViewSet):
         except Room.DoesNotExist:
             return Response({'error': 'Room not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # 48-Hour Cooldown Check: Emergency override key can only be issued once every 48 hours per room
+        now = timezone.now()
+        cooldown_threshold = now - timedelta(hours=48)
+        last_emergency = RoomAccessCode.objects.filter(
+            room=room,
+            code_type='emergency',
+            created_at__gte=cooldown_threshold
+        ).order_by('-created_at').first()
+
+        if last_emergency:
+            remaining_seconds = (last_emergency.created_at + timedelta(hours=48) - now).total_seconds()
+            hours_left = max(0, int(remaining_seconds // 3600))
+            minutes_left = int((remaining_seconds % 3600) // 60)
+            time_str = f"{hours_left}h {minutes_left}m" if hours_left > 0 else f"{minutes_left}m"
+            return Response({
+                'error': f'Emergency key cooldown active. An emergency override key can only be issued once every 48 hours for Room {room.room_number}. Try again in {time_str}.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         booking = None
         if booking_id:
             from bookings.models import Booking

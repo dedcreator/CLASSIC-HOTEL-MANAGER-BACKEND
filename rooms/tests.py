@@ -83,10 +83,19 @@ class ZeroTrustAccessControlTests(TestCase):
         diff_minutes = (valid_until - created_at).total_seconds() / 60
         self.assertAlmostEqual(diff_minutes, 60, delta=1)
 
-        # CEO can create
+        # Room 2 for CEO
+        room2 = Room.objects.create(
+            room_number='202',
+            room_type='deluxe',
+            base_price=30000,
+            status='available',
+            capacity=2
+        )
+
+        # CEO can create for another room
         self.client.force_authenticate(user=self.ceo)
         resp_ceo = self.client.post('/api/rooms/access-codes/create_emergency/', {
-            'room_id': str(self.room.id),
+            'room_id': str(room2.id),
             'reason': 'CEO security inspection'
         }, format='json')
         self.assertEqual(resp_ceo.status_code, 201)
@@ -98,6 +107,37 @@ class ZeroTrustAccessControlTests(TestCase):
             'reason': 'Unauthorized attempt'
         }, format='json')
         self.assertEqual(resp_rec.status_code, 403)
+
+    def test_emergency_key_48_hour_cooldown(self):
+        """Emergency override key can only be issued once every 48 hours per room"""
+        self.client.force_authenticate(user=self.manager)
+
+        # 1st emergency key succeeds
+        resp1 = self.client.post('/api/rooms/access-codes/create_emergency/', {
+            'room_id': str(self.room.id),
+            'reason': 'First emergency intervention'
+        }, format='json')
+        self.assertEqual(resp1.status_code, 201)
+
+        # 2nd emergency key within 48 hours fails with 400 Bad Request
+        resp2 = self.client.post('/api/rooms/access-codes/create_emergency/', {
+            'room_id': str(self.room.id),
+            'reason': 'Second emergency attempt too soon'
+        }, format='json')
+        self.assertEqual(resp2.status_code, 400)
+        self.assertIn('Emergency key cooldown active', resp2.data['error'])
+
+        # Fast forward time beyond 48 hours
+        first_code = RoomAccessCode.objects.get(code=resp1.data['access_code']['code'])
+        first_code.created_at = timezone.now() - timedelta(hours=49)
+        first_code.save()
+
+        # Now issuing another emergency key succeeds
+        resp3 = self.client.post('/api/rooms/access-codes/create_emergency/', {
+            'room_id': str(self.room.id),
+            'reason': 'Emergency intervention after 48-hour cooldown passed'
+        }, format='json')
+        self.assertEqual(resp3.status_code, 201)
 
     def test_housekeeping_cleaning_key_approval_and_activation(self):
         """Housekeeping requests key -> Manager approves -> Room activated back to available"""
