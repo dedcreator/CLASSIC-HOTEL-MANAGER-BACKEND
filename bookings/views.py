@@ -19,6 +19,46 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def issue_checkin_access_code(booking, user=None, request=None):
+    from rooms.models import RoomAccessCode, generate_access_code, log_security_event
+    from datetime import datetime, time
+    from django.utils import timezone
+
+    # Checkin period end + 10 mins grace period
+    checkout_date = booking.check_out
+    checkout_dt = timezone.make_aware(datetime.combine(checkout_date, time(12, 0)))
+    expires_at = checkout_dt + timedelta(minutes=10)
+
+    if expires_at <= timezone.now():
+        expires_at = timezone.now() + timedelta(minutes=10)
+
+    RoomAccessCode.objects.filter(booking=booking, code_type='checkin', status='active').update(status='revoked')
+
+    code_str = generate_access_code(prefix="CHK", length=6)
+    access_code = RoomAccessCode.objects.create(
+        code=code_str,
+        code_type='checkin',
+        room=booking.room,
+        booking=booking,
+        status='active',
+        created_by=user if user and user.is_authenticated else None,
+        valid_from=timezone.now(),
+        valid_until=expires_at,
+        reason=f"Guest check-in for {booking.guest.get_full_name() if booking.guest else 'Guest'}",
+    )
+
+    log_security_event(
+        request=request,
+        actor=user if user and user.is_authenticated else None,
+        action='CHECKIN_CODE_GENERATED',
+        room=booking.room,
+        booking=booking,
+        access_code=code_str,
+        details=f"Check-in access code {code_str} issued. Valid until {expires_at.strftime('%Y-%m-%d %H:%M:%S')} (10m after stay period)."
+    )
+    return access_code
+
+
 # ========== PUBLIC ENDPOINTS (No Authentication Required) ==========
 
 # backend/bookings/views.py - Update public_booking
@@ -107,8 +147,61 @@ def public_booking(request):
             total_amount=total_amount,
             special_requests=data.get('specialRequests', ''),
             status='confirmed',
-            payment_status='pending'
+            payment_status='pending',
+            payment_method='korapay'
         )
+
+        # Initialize Korapay payment
+        payment_link = ''
+        payment_reference = ''
+        try:
+            from payments.services import korapay_service
+            from payments.models import Payment
+
+            payment_reference = korapay_service.generate_reference()
+            callback_url = data.get('callbackUrl') or f"{settings.FRONTEND_URL}/payment/verify"
+
+            kora_res = korapay_service.initialize_payment(
+                amount=total_amount,
+                customer_email=guest.email,
+                customer_name=guest.get_full_name(),
+                reference=payment_reference,
+                payment_type='booking',
+                metadata={
+                    'booking_id': str(booking.id),
+                    'booking_reference': booking.booking_reference,
+                    'room_number': room.room_number,
+                    'check_in': str(check_in),
+                    'check_out': str(check_out),
+                },
+                callback_url=callback_url,
+                description=f"Online Booking for Room {room.room_number} ({booking.booking_reference})"
+            )
+
+            if kora_res.get('success'):
+                payment_link = kora_res.get('payment_link', '')
+
+            Payment.objects.create(
+                transaction_id=payment_reference,
+                amount=total_amount,
+                payment_method='korapay',
+                payment_type='booking',
+                status='pending',
+                booking=booking,
+                customer_name=guest.get_full_name(),
+                customer_email=guest.email,
+                customer_phone=guest.phone,
+                description=f"Online booking {booking.booking_reference}",
+            )
+        except Exception as kora_err:
+            logger.error(f"Korapay init error in public_booking: {kora_err}")
+
+        # Trigger website booking notifications (email, receptionist in-app & push)
+        try:
+            from notifications.services import notify_website_booking
+            notify_website_booking(booking=booking)
+        except Exception as notif_err:
+            logger.error(f"Failed to dispatch website booking notification: {notif_err}")
         
         return Response({
             'success': True,
@@ -119,6 +212,8 @@ def public_booking(request):
             'total_amount': float(total_amount),
             'nights': nights,
             'price_per_night': float(room.base_price),
+            'payment_link': payment_link,
+            'payment_reference': payment_reference,
             'booking': BookingSerializer(booking).data
         }, status=status.HTTP_201_CREATED)
         
@@ -317,9 +412,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                 paid_at=timezone.now(),
             )
             
+            access_code = issue_checkin_access_code(booking, request.user, request=request)
+            from rooms.serializers import RoomAccessCodeSerializer
             return Response({
                 'success': True,
                 'booking': BookingSerializer(booking).data,
+                'access_code': RoomAccessCodeSerializer(access_code).data,
                 'message': f'Guest checked in successfully'
             })
         
@@ -425,9 +523,12 @@ class BookingViewSet(viewsets.ModelViewSet):
                 room.status = 'occupied'
                 room.save()
             
+            access_code = issue_checkin_access_code(booking, request.user, request=request)
+            from rooms.serializers import RoomAccessCodeSerializer
             return Response({
                 'success': True,
                 'booking': BookingSerializer(booking).data,
+                'access_code': RoomAccessCodeSerializer(access_code).data,
                 'message': 'Check-in completed successfully'
             })
         else:
@@ -480,10 +581,30 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.checked_out_at = timezone.now()
         booking.save()
         
+        # Revoke/expire any active access codes for this booking/room
+        from rooms.models import RoomAccessCode, log_security_event
+        RoomAccessCode.objects.filter(booking=booking, status='active').update(status='expired')
+
         # Update room status
         room = booking.room
         room.status = 'cleaning'
         room.save()
+
+        log_security_event(
+            request=request,
+            actor=request.user if request.user.is_authenticated else None,
+            action='ROOM_STATUS_CHANGED',
+            room=room,
+            booking=booking,
+            details=f"Guest checked out. Active access codes revoked. Room moved to cleaning."
+        )
+
+        # Trigger housekeeping notification (PWA push & in-app)
+        try:
+            from notifications.services import notify_room_checkout
+            notify_room_checkout(room=room, booking=booking)
+        except Exception as notif_err:
+            logger.error(f"Failed to dispatch room checkout notification: {notif_err}")
         
         return Response({
             'success': True,

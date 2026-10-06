@@ -83,7 +83,19 @@ class ProductViewSet(viewsets.ModelViewSet):
         return queryset
     
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        product = serializer.save(created_by=self.request.user)
+        if product.total_stock > 0:
+            try:
+                from notifications.services import notify_stock_added
+                notify_stock_added(
+                    product=product,
+                    batch=None,
+                    user=self.request.user,
+                    quantity=product.total_stock
+                )
+            except Exception as notif_err:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to dispatch stock added notification: {notif_err}")
     
     @action(detail=False, methods=['get'])
     def simple_list(self, request):
@@ -161,6 +173,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                 resolved_at=timezone.now(),
                 resolved_by=request.user
             )
+
+        # Trigger CEO push and email notification
+        try:
+            from notifications.services import notify_stock_added
+            notify_stock_added(
+                product=product,
+                batch=batch,
+                user=request.user,
+                quantity=data['quantity']
+            )
+        except Exception as notif_err:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to dispatch stock added notification: {notif_err}")
         
         return Response(BatchSerializer(batch).data, status=status.HTTP_201_CREATED)
     

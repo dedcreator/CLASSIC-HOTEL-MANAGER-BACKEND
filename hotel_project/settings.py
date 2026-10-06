@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'payments',
     'menu',
     'tables',
+    'notifications',
 ]
 
 # MIDDLEWARE - CorsMiddleware and WhiteNoise
@@ -192,7 +193,7 @@ if CORS_ALLOWED_ORIGINS_CONFIG:
             CORS_ALLOWED_ORIGINS.append(origin.strip())
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=True, cast=bool)
+CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -248,3 +249,15 @@ KORAPAY_WEBHOOK_SECRET = config('KORAPAY_WEBHOOK_SECRET', default=os.environ.get
 MIGRATION_MODULES = {
     'payments': 'payments.migrations',
 }
+
+# Web Push Notification Settings (VAPID)
+VAPID_PUBLIC_KEY = config(
+    'VAPID_PUBLIC_KEY',
+    default='BD-AGsAC0qvm8GPm0w5DqVg3Gti8akIsqL2c0zNiP4Euk05UDbIrPt4cUwORZllPcR4bLfy5492eoANPOWMzH7o'
+)
+VAPID_PRIVATE_KEY_PATH = config(
+    'VAPID_PRIVATE_KEY_PATH',
+    default=str(BASE_DIR / 'vapid_private_key.pem')
+)
+VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default='admin@tsghotel.com.ng')
+HOTEL_NOTIFICATION_EMAIL = config('HOTEL_NOTIFICATION_EMAIL', default='reception@tsghotel.com.ng')

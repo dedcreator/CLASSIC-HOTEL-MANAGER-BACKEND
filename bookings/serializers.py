@@ -21,6 +21,7 @@ class BookingSerializer(serializers.ModelSerializer):
     guest_name = serializers.SerializerMethodField()
     room_number = serializers.SerializerMethodField()
     nights = serializers.SerializerMethodField()
+    active_access_code = serializers.SerializerMethodField()
     
     class Meta:
         model = Booking
@@ -34,8 +35,9 @@ class BookingSerializer(serializers.ModelSerializer):
             'status', 'special_requests',
             'checked_in_at', 'checked_out_at',
             'created_at', 'updated_at', 'created_by',
+            'active_access_code',
         ]
-        read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at', 'checked_in_at', 'checked_out_at']
+        read_only_fields = ['id', 'booking_reference', 'created_at', 'updated_at', 'checked_in_at', 'checked_out_at', 'active_access_code']
     
     def get_guest_name(self, obj):
         return f"{obj.guest.first_name} {obj.guest.last_name}"
@@ -45,6 +47,13 @@ class BookingSerializer(serializers.ModelSerializer):
     
     def get_nights(self, obj):
         return obj.total_nights
+
+    def get_active_access_code(self, obj):
+        from rooms.serializers import RoomAccessCodeSerializer
+        code = obj.access_codes.filter(status='active').order_by('-created_at').first()
+        if code and code.is_valid:
+            return RoomAccessCodeSerializer(code).data
+        return None
 
 class CreateBookingSerializer(serializers.ModelSerializer):
     guest = serializers.PrimaryKeyRelatedField(queryset=Guest.objects.all(), required=False)

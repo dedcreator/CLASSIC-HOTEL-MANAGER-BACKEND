@@ -1,2 +1,11 @@
 *.sqlite3
 db.sqlite3
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+.env
+staticfiles/
+media/

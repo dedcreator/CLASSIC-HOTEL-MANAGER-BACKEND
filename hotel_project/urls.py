@@ -41,6 +41,7 @@ urlpatterns = [
     path('api/payments/', include('payments.urls')),
     path('api/menu/', include('menu.urls')),  
     path('api/tables/', include('tables.urls')),
+    path('api/notifications/', include('notifications.urls')),
 ]
 
 # DRF Settings - Add DEFAULT_PERMISSION_CLASSES
