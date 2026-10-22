@@ -1,0 +1,201 @@
+import os
+import sys
+import django
+from datetime import timedelta, date
+from decimal import Decimal
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotel_project.settings')
+django.setup()
+
+from django.utils import timezone
+from accounts.models import User
+from inventory.models import Product, StockMovement
+from sales.models import Sale, SaleItem
+from bookings.models import Guest, Booking
+from rooms.models import Room, RoomAccessCode, SecurityAuditLog, log_security_event
+from consumables.models import Expense, ExpenseCategory
+
+
+def seed_fraud_scenarios():
+    print("🔍 Seeding Realistic Staff Activity Patterns for AI Fraud Detection...")
+
+    now = timezone.now()
+
+    # 1. Ensure staff accounts exist
+    emeka, _ = User.objects.get_or_create(
+        username='barstaff',
+        defaults={'first_name': 'Emeka', 'last_name': 'Okafor', 'role': 'BAR_STAFF', 'email': 'emeka@hotel.com'}
+    )
+    john, _ = User.objects.get_or_create(
+        username='barstaff2',
+        defaults={'first_name': 'John', 'last_name': 'Obi', 'role': 'BAR_STAFF', 'email': 'john@hotel.com'}
+    )
+    john.set_password('bar123')
+    john.save()
+
+    amina, _ = User.objects.get_or_create(
+        username='reception',
+        defaults={'first_name': 'Amina', 'last_name': 'Bello', 'role': 'RECEPTIONIST', 'email': 'amina@hotel.com'}
+    )
+    david, _ = User.objects.get_or_create(
+        username='reception2',
+        defaults={'first_name': 'David', 'last_name': 'Adeleke', 'role': 'RECEPTIONIST', 'email': 'david@hotel.com'}
+    )
+    david.set_password('reception123')
+    david.save()
+
+    folake, _ = User.objects.get_or_create(
+        username='manager',
+        defaults={'first_name': 'Folake', 'last_name': 'Adeyemi', 'role': 'MANAGER', 'email': 'manager@hotel.com'}
+    )
+
+    hennessy = Product.objects.filter(name__icontains='Hennessy').first()
+    jameson = Product.objects.filter(name__icontains='Jameson').first()
+    heineken = Product.objects.filter(name__icontains='Heineken').first()
+    water = Product.objects.filter(name__icontains='Eva').first()
+
+    # -------------------------------------------------------------
+    # Scenario 1: Emeka Okafor (Bar Staff) -> Phantom Wastage & High Cash Skimming
+    # -------------------------------------------------------------
+    print("  • Seeding anomalies for Emeka Okafor (Bar Staff)...")
+    if hennessy:
+        StockMovement.objects.create(
+            product=hennessy,
+            quantity=-2,
+            movement_type='wastage',
+            price_at_movement=hennessy.default_price,
+            notes='Dropped during VIP service by bar station - broken bottles',
+            created_by=emeka
+        )
+    if jameson:
+        StockMovement.objects.create(
+            product=jameson,
+            quantity=-3,
+            movement_type='adjustment',
+            price_at_movement=jameson.default_price,
+            notes='Spillage adjustment - bottle cork damaged',
+            created_by=emeka
+        )
+
+    # POS Sales for Emeka: 90% Cash, heavy discounts
+    for i in range(8):
+        sale = Sale.objects.create(
+            guest_name=f'Bar Walk-in #{100+i}',
+            payment_method='cash',
+            payment_status='completed',
+            discount=Decimal('2500.00') if i % 2 == 0 else Decimal('0.00'),
+            total_amount=Decimal('12000.00'),
+            amount_paid=Decimal('12000.00'),
+            staff=emeka
+        )
+        if heineken:
+            SaleItem.objects.create(
+                sale=sale,
+                product=heineken,
+                quantity=4,
+                unit_price=Decimal('1200.00'),
+                subtotal=Decimal('4800.00')
+            )
+
+    # -------------------------------------------------------------
+    # Scenario 2: Amina Bello (Receptionist) -> Unpaid Check-ins & Emergency Key Exploits
+    # -------------------------------------------------------------
+    print("  • Seeding anomalies for Amina Bello (Receptionist)...")
+    room_101 = Room.objects.filter(room_number='101').first()
+    room_102 = Room.objects.filter(room_number='102').first()
+    room_103 = Room.objects.filter(room_number='103').first()
+
+    guest_suspicious, _ = Guest.objects.get_or_create(
+        email='guest_unpaid@example.com',
+        defaults={'first_name': 'Tunde', 'last_name': 'Bakare', 'phone': '08099887766'}
+    )
+
+    if room_101:
+        Booking.objects.create(
+            guest=guest_suspicious,
+            room=room_101,
+            check_in=date.today(),
+            check_out=date.today() + timedelta(days=2),
+            total_nights=2,
+            total_amount=Decimal('30000.00'),
+            amount_paid=Decimal('0.00'),  # Zero paid!
+            status='checked_in',
+            payment_status='pending',
+            payment_method='cash',
+            created_by=amina,
+            checked_in_at=now - timedelta(hours=6)
+        )
+
+    # Suspicious Emergency Override codes generated by Amina
+    if room_103:
+        SecurityAuditLog.objects.create(
+            actor=amina,
+            actor_username=amina.username,
+            actor_role=amina.role,
+            action='EMERGENCY_CODE_GENERATED',
+            room=room_103,
+            room_number='103',
+            access_code='EMG-103-9921',
+            details='Emergency 1-Hour Access Code created at 02:40 AM without booking reference.',
+            ip_address='192.168.1.45'
+        )
+        SecurityAuditLog.objects.create(
+            actor=amina,
+            actor_username=amina.username,
+            actor_role=amina.role,
+            action='EMERGENCY_CODE_GENERATED',
+            room=room_103,
+            room_number='103',
+            access_code='EMG-103-7712',
+            details='Emergency 1-Hour Access Code created at 03:15 AM without booking reference.',
+            ip_address='192.168.1.45'
+        )
+
+    # -------------------------------------------------------------
+    # Scenario 3: John Obi (Clean Bar Staff) -> Normal, Balanced Telemetry
+    # -------------------------------------------------------------
+    print("  • Seeding clean records for John Obi (Bar Staff)...")
+    for i in range(10):
+        Sale.objects.create(
+            guest_name=f'Guest Room #{200+i}',
+            payment_method='card' if i % 2 == 0 else 'transfer',
+            payment_status='completed',
+            discount=Decimal('0.00'),
+            total_amount=Decimal('8500.00'),
+            amount_paid=Decimal('8500.00'),
+            staff=john
+        )
+
+    # -------------------------------------------------------------
+    # Scenario 4: Folake Adeyemi (Manager) -> Unreceipted Cash Expenses
+    # -------------------------------------------------------------
+    print("  • Seeding expense vouchers for Folake Adeyemi (Manager)...")
+    supplies_cat, _ = ExpenseCategory.objects.get_or_create(
+        name='Operations & Supplies',
+        defaults={'description': 'General supplies'}
+    )
+    Expense.objects.create(
+        category=supplies_cat,
+        description='Emergency generator diesel purchase top-up',
+        amount=Decimal('45000.00'),
+        payment_method='cash',
+        expense_date=date.today(),
+        receipt_number='',  # Missing receipt!
+        notes='Cash paid directly to local fuel vendor tanker',
+        created_by=folake
+    )
+    Expense.objects.create(
+        category=supplies_cat,
+        description='Staff lounge refreshments & provisions',
+        amount=Decimal('22000.00'),
+        payment_method='cash',
+        expense_date=date.today() - timedelta(days=3),
+        receipt_number='',  # Missing receipt!
+        notes='Market purchase for front desk tea & cleaning supplies',
+        created_by=folake
+    )
+
+    print("✅ Fraud telemetry scenarios successfully seeded!")
+
+if __name__ == '__main__':
+    seed_fraud_scenarios()

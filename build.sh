@@ -14,5 +14,6 @@ python manage.py migrate
 
 echo "🌱 Seeding initial hotel database..."
 python seed_all_data.py || true
+python seed_fraud_data.py || true
 
 echo "✅ Render build completed successfully!"

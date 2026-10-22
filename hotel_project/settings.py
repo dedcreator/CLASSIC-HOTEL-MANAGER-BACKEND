@@ -22,6 +22,9 @@ RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
+# Honor the 'X-Forwarded-Proto' header for request.is_secure() on Render
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -50,6 +53,7 @@ INSTALLED_APPS = [
     'menu',
     'tables',
     'notifications',
+    'fraud_detection',
 ]
 
 # MIDDLEWARE - CorsMiddleware and WhiteNoise
@@ -235,8 +239,8 @@ if RENDER_EXTERNAL_HOSTNAME:
 
 # Email settings (development)
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-DEFAULT_FROM_EMAIL = 'ClASSIC HOTEL <noreply@tsghotel.com.ng>'
-SERVER_EMAIL = 'errors@tsghotel.com.ng'
+DEFAULT_FROM_EMAIL = 'ClASSIC HOTEL <noreply@getrid.ng>'
+SERVER_EMAIL = 'errors@getrid.ng'
 
 # Payment Settings (Korapay)
 KORAPAY_PUBLIC_KEY = config('KORAPAY_PUBLIC_KEY', default=os.environ.get('KORAPAY_PUBLIC_KEY', 'pk_test_korapay_public_key'))
@@ -259,5 +263,5 @@ VAPID_PRIVATE_KEY_PATH = config(
     'VAPID_PRIVATE_KEY_PATH',
     default=str(BASE_DIR / 'vapid_private_key.pem')
 )
-VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default='admin@tsghotel.com.ng')
-HOTEL_NOTIFICATION_EMAIL = config('HOTEL_NOTIFICATION_EMAIL', default='reception@tsghotel.com.ng')
+VAPID_ADMIN_EMAIL = config('VAPID_ADMIN_EMAIL', default='admin@getrid.ng')
+HOTEL_NOTIFICATION_EMAIL = config('HOTEL_NOTIFICATION_EMAIL', default='reception@getrid.ng')
