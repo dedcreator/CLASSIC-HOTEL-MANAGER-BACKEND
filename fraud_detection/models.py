@@ -83,7 +83,7 @@ class FraudAISettings(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    provider = models.CharField(max_length=50, choices=PROVIDER_CHOICES, default='groq')
+    provider = models.CharField(max_length=50, choices=PROVIDER_CHOICES, default='hybrid')
     api_key = models.CharField(max_length=255, blank=True, default='')
     model_name = models.CharField(max_length=100, default='llama-3.3-70b-versatile')
     sensitivity = models.CharField(max_length=20, choices=SENSITIVITY_CHOICES, default='medium')
@@ -98,7 +98,7 @@ class FraudAISettings(models.Model):
         obj = cls.objects.first()
         if not obj:
             obj = cls.objects.create(
-                provider='groq',
+                provider='hybrid',
                 model_name='llama-3.3-70b-versatile',
                 sensitivity='medium'
             )
