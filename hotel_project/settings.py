@@ -91,14 +91,33 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'hotel_project.wsgi.application'
 
-# Database - automatic PostgreSQL support on Render with SQLite local fallback
-DATABASES = {
-    'default': dj_database_url.config(
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-}
+# Database - PostgreSQL support on Render with SQLite local repository fallback
+raw_db_url = (os.environ.get('DATABASE_URL') or config('DATABASE_URL', default='')).strip()
+valid_schemes = ('postgres://', 'postgresql://', 'mysql://', 'sqlite://')
+
+if raw_db_url and any(raw_db_url.startswith(scheme) for scheme in valid_schemes) and '://' != raw_db_url:
+    try:
+        DATABASES = {
+            'default': dj_database_url.parse(
+                raw_db_url,
+                conn_max_age=600,
+                conn_health_checks=True,
+            )
+        }
+    except Exception:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
+            }
+        }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
