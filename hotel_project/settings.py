@@ -12,10 +12,10 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-your-secret-key-here'
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-# ALLOWED_HOSTS for Render, UptimeRobot, and local development
-ALLOWED_HOSTS_CONFIG = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com,*')
+# ALLOWED_HOSTS for Render, UptimeRobot, custom domains (.dedcreator.cv), and local development
+ALLOWED_HOSTS_CONFIG = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com,.dedcreator.cv,dedcreator.cv,*')
 ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_CONFIG.split(',') if host.strip()]
-for default_host in ['localhost', '127.0.0.1', 'testserver', '.onrender.com']:
+for default_host in ['localhost', '127.0.0.1', 'testserver', '.onrender.com', '.dedcreator.cv', 'dedcreator.cv']:
     if default_host not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(default_host)
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
@@ -209,11 +209,20 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3002",
     "http://127.0.0.1:3003",
+    "https://dedcreator.cv",
+    "http://dedcreator.cv",
 ]
 if CORS_ALLOWED_ORIGINS_CONFIG:
     for origin in CORS_ALLOWED_ORIGINS_CONFIG.split(','):
         if origin.strip() and origin.strip() not in CORS_ALLOWED_ORIGINS:
             CORS_ALLOWED_ORIGINS.append(origin.strip())
+
+# Support all subdomains on .dedcreator.cv and vercel
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https?://.*\.dedcreator\.cv$",
+    r"^https?://.*\.vercel\.app$",
+    r"^https?://.*\.onrender\.com$",
+]
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
@@ -252,6 +261,10 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3003",
     "https://*.onrender.com",
     "https://*.vercel.app",
+    "https://*.dedcreator.cv",
+    "http://*.dedcreator.cv",
+    "https://dedcreator.cv",
+    "http://dedcreator.cv",
 ]
 if RENDER_EXTERNAL_HOSTNAME:
     CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
